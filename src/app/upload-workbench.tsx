@@ -11,6 +11,7 @@ type SvgAnalysis = {
   height: string;
   aspectRatio: number;
   nativeWidthMm: number | null;
+  vectorWidth: number;
   elements: number;
   paths: number;
   nodes: number;
@@ -19,7 +20,11 @@ type SvgAnalysis = {
   closed: number;
   rating: "Clean" | "Needs attention" | "Too complex";
   note: string;
+  geometry: GeometrySample[];
 };
+
+type GeometrySample = { width: number; height: number; open: boolean; filled: boolean; stroked: boolean };
+type StitchPlan = { running: number; satin: number; fill: number; tooSmall: number };
 
 type LoadedDesign = { name: string; size: string; url: string; analysis: SvgAnalysis };
 
@@ -59,6 +64,41 @@ function lengthToMm(value: string | null) {
   return amount * ({ mm: 1, cm: 10, in: 25.4, px: 25.4 / 96 }[unit] ?? 1);
 }
 
+function measureGeometry(elements: Element[], openElements: Set<Element>) {
+  const namespace = "http://www.w3.org/2000/svg";
+  const measuringSvg = window.document.createElementNS(namespace, "svg");
+  measuringSvg.style.cssText = "position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;overflow:visible;opacity:0;pointer-events:none";
+  window.document.body.appendChild(measuringSvg);
+  const attributes = ["d", "x", "y", "width", "height", "cx", "cy", "r", "rx", "ry", "x1", "y1", "x2", "y2", "points", "transform"];
+  const samples = elements.map((source) => {
+    const copy = window.document.createElementNS(namespace, source.tagName.toLowerCase()) as SVGGraphicsElement;
+    for (const attribute of attributes) {
+      const value = source.getAttribute(attribute);
+      if (value !== null) copy.setAttribute(attribute, value);
+    }
+    measuringSvg.appendChild(copy);
+    let width = 0;
+    let height = 0;
+    try { const box = copy.getBBox(); width = box.width; height = box.height; } catch { /* malformed geometry stays at zero */ }
+    copy.remove();
+    return { width, height, open: openElements.has(source), filled: inheritedPaint(source, "fill") !== "none", stroked: inheritedPaint(source, "stroke") !== "none" };
+  });
+  measuringSvg.remove();
+  return samples;
+}
+
+function buildStitchPlan(geometry: GeometrySample[], scale: number): StitchPlan {
+  return geometry.reduce<StitchPlan>((plan, shape) => {
+    const shortSide = Math.min(shape.width * scale, shape.height * scale);
+    const longSide = Math.max(shape.width * scale, shape.height * scale);
+    if (longSide < 0.8 || (shape.filled && shortSide < 0.45)) plan.tooSmall += 1;
+    else if (shape.open || (!shape.filled && shape.stroked)) plan.running += 1;
+    else if (shortSide <= 6 && longSide / Math.max(shortSide, 0.01) >= 2) plan.satin += 1;
+    else plan.fill += 1;
+    return plan;
+  }, { running: 0, satin: 0, fill: 0, tooSmall: 0 });
+}
+
 function analyzeSvg(source: string): SvgAnalysis {
   const document = new DOMParser().parseFromString(source, "image/svg+xml");
   if (document.querySelector("parsererror") || document.documentElement.tagName.toLowerCase() !== "svg") throw new Error("This SVG could not be read.");
@@ -80,6 +120,10 @@ function analyzeSvg(source: string): SvgAnalysis {
   const inherentlyClosed = svg.querySelectorAll("rect,circle,ellipse,polygon").length;
   const open = Math.max(0, paths.length - closedPaths) + svg.querySelectorAll("line,polyline").length;
   const closed = closedPaths + inherentlyClosed;
+  const openElements = new Set<Element>([
+    ...paths.filter((path) => !/[zZ]\s*$/.test(path.getAttribute("d")?.trim() ?? "")),
+    ...svg.querySelectorAll("line,polyline"),
+  ]);
   const colors = collectColors([svg, ...elements]);
 
   let rating: SvgAnalysis["rating"] = "Clean";
@@ -97,6 +141,7 @@ function analyzeSvg(source: string): SvgAnalysis {
     height: readableDimension(rawHeight, viewBox?.[3]),
     aspectRatio: vectorWidth / vectorHeight,
     nativeWidthMm: lengthToMm(rawWidth),
+    vectorWidth,
     elements: elements.length,
     paths: paths.length,
     nodes,
@@ -105,6 +150,7 @@ function analyzeSvg(source: string): SvgAnalysis {
     closed,
     rating,
     note,
+    geometry: measureGeometry(elements, openElements),
   };
 }
 
@@ -135,6 +181,7 @@ export default function UploadWorkbench() {
 
   function handleChange(event: ChangeEvent<HTMLInputElement>) { loadFile(event.target.files?.[0]); event.target.value = ""; }
   function handleDrop(event: DragEvent<HTMLDivElement>) { event.preventDefault(); setIsDragging(false); loadFile(event.dataTransfer.files[0]); }
+  const stitchPlan = design ? buildStitchPlan(design.analysis.geometry, targetWidth / design.analysis.vectorWidth) : null;
 
   if (design) return (
     <div className={styles.loadedDesign} aria-live="polite">
@@ -174,8 +221,18 @@ export default function UploadWorkbench() {
           <div><span className={styles.closedDot}/><strong>{design.analysis.closed}</strong> closed shapes</div>
           <div className={styles.palette}><small>{design.analysis.colors.length} color{design.analysis.colors.length === 1 ? "" : "s"}</small>{design.analysis.colors.map((color) => <span key={color} title={color} style={{ backgroundColor: color }}/>)}</div>
         </div>
-        <p className={styles.diagnosisNote}>{design.analysis.note} <span>Next: identify what should become a running stitch, satin, or fill.</span></p>
+        <p className={styles.diagnosisNote}>{design.analysis.note} <span>The first stitch interpretation is ready below.</span></p>
       </section>
+      {stitchPlan && <section className={styles.stitchPlan} aria-labelledby="stitch-plan-title">
+        <header><div><span className={styles.scanLabel}>First interpretation</span><h3 id="stitch-plan-title">How it may want to stitch.</h3></div><small>Based on geometry at {targetWidth} mm</small></header>
+        <div className={styles.stitchCards}>
+          <article><span className={styles.runningIcon}>—</span><div><strong>{stitchPlan.running}</strong><small>Running stitch</small></div><p>Open lines and stroked paths.</p></article>
+          <article><span className={styles.satinIcon}>≋</span><div><strong>{stitchPlan.satin}</strong><small>Satin candidates</small></div><p>Narrow, elongated closed shapes.</p></article>
+          <article><span className={styles.fillIcon}>▰</span><div><strong>{stitchPlan.fill}</strong><small>Fill candidates</small></div><p>Broader areas with a closed edge.</p></article>
+          <article className={stitchPlan.tooSmall ? styles.warningCard : ""}><span className={styles.smallIcon}>·</span><div><strong>{stitchPlan.tooSmall}</strong><small>Too small</small></div><p>Under the safe detail threshold.</p></article>
+        </div>
+        <p className={styles.heuristicNote}><span>01</span> This is a geometric recommendation, not a final digitization. You stay in control.</p>
+      </section>}
       <input ref={inputRef} className={styles.hiddenInput} type="file" accept=".svg,image/svg+xml" onChange={handleChange}/>
     </div>
   );
