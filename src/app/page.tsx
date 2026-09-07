@@ -1,69 +1,44 @@
-import Image from "next/image";
+import styles from "./page.module.css";
+
+function ThreadMark() {
+  return <svg aria-hidden="true" className={styles.threadMark} viewBox="0 0 48 48" fill="none"><path d="M8 24h32M24 8c0 9-8 9-8 16s8 7 8 16M24 8c0 9 8 9 8 16s-8 7-8 16"/><circle cx="24" cy="24" r="3.25"/></svg>;
+}
+
+function HoopIllustration() {
+  return (
+    <svg aria-hidden="true" className={styles.hoop} viewBox="0 0 620 620" fill="none">
+      <circle className={styles.hoopShadow} cx="310" cy="318" r="235"/><circle className={styles.hoopOuter} cx="310" cy="300" r="235"/><circle className={styles.hoopInner} cx="310" cy="300" r="215"/>
+      <path className={styles.fabricLine} d="M98 275c71 17 142 20 213 7 86-15 158-11 213 10M116 364c64-13 132-11 203 7 67 17 127 18 181 3"/>
+      <path className={styles.stitchPath} pathLength="1" d="M213 339c18-78 48-119 89-123 51-5 84 49 108 145M238 310c38 20 77 22 116 6"/>
+      <circle className={styles.needleEye} cx="412" cy="367" r="5"/><path className={styles.needle} d="m416 371 69 69"/><path className={styles.looseThread} d="M485 440c34 35 54 21 31-15-16-25 1-39 34-24"/><path className={styles.clasp} d="M276 61h68v27h-68zM289 42h42v19h-42z"/>
+    </svg>
+  );
+}
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className={styles.workshop}>
+      <nav className={styles.nav} aria-label="Main navigation">
+        <a className={styles.brand} href="#top" aria-label="ThreadLab home"><ThreadMark/><span>ThreadLab</span></a>
+        <span className={styles.status}><i aria-hidden="true"/> Workshop open</span>
+      </nav>
+      <section className={styles.hero} id="top">
+        <div className={styles.copy}>
+          <p className={styles.eyebrow}>Day 01 · The workshop opens</p>
+          <h1>Ideas, ready<br/><em>to take shape.</em></h1>
+          <p className={styles.intro}>ThreadLab turns drawings into embroidery-ready paths—without making you think like a machine.</p>
+          <div className={styles.actions}>
+            <a className={styles.primaryAction} href="#workbench">Enter the workshop <span aria-hidden="true">↘</span></a>
+            <span className={styles.actionNote}>Start with an SVG. Leave with a clean path.</span>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        <div className={styles.visual}><span className={`${styles.note} ${styles.noteTop}`}>One idea</span><HoopIllustration/><span className={`${styles.note} ${styles.noteBottom}`}>One confident path</span></div>
+      </section>
+      <section className={styles.workbench} id="workbench">
+        <div><p className={styles.eyebrow}>Your first workbench</p><h2>Bring in a line.<br/>We’ll help it stitch.</h2></div>
+        <button className={styles.dropzone} type="button"><span className={styles.plus}>+</span><span><strong>Choose an SVG</strong><small>or drop it here</small></span><span className={styles.fileType}>.SVG</span></button>
+      </section>
+      <footer className={styles.footer}><span>Built for the space between drawing and thread.</span><span>ThreadLab · Córdoba</span></footer>
+    </main>
   );
 }
