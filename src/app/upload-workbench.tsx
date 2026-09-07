@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
+import { generateRunningStitches, type RunningStitchResult } from "./running-stitch";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const GEOMETRY_SELECTOR = "path,rect,circle,ellipse,line,polyline,polygon";
@@ -25,8 +26,7 @@ type SvgAnalysis = {
 
 type GeometrySample = { width: number; height: number; open: boolean; filled: boolean; stroked: boolean };
 type StitchPlan = { running: number; satin: number; fill: number; tooSmall: number };
-
-type LoadedDesign = { name: string; size: string; url: string; analysis: SvgAnalysis };
+type LoadedDesign = { name: string; size: string; url: string; source: string; analysis: SvgAnalysis };
 
 function readableDimension(value: string | null, fallback: number | undefined) {
   if (value) return value;
@@ -160,8 +160,13 @@ export default function UploadWorkbench() {
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [targetWidth, setTargetWidth] = useState(80);
+  const [runningResult, setRunningResult] = useState<RunningStitchResult | null>(null);
 
   useEffect(() => () => { if (design) URL.revokeObjectURL(design.url); }, [design]);
+  useEffect(() => {
+    if (!design) { setRunningResult(null); return; }
+    setRunningResult(generateRunningStitches(design.source, targetWidth / design.analysis.vectorWidth));
+  }, [design, targetWidth]);
 
   async function loadFile(file?: File) {
     setError("");
@@ -171,9 +176,10 @@ export default function UploadWorkbench() {
     if (file.size > MAX_FILE_SIZE) { setError("That SVG is over 5 MB. Try a lighter export."); return; }
 
     try {
-      const analysis = analyzeSvg(await file.text());
+      const source = await file.text();
+      const analysis = analyzeSvg(source);
       setTargetWidth(Math.round(analysis.nativeWidthMm ?? 80));
-      setDesign({ name: file.name, size: file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`, url: URL.createObjectURL(file), analysis });
+      setDesign({ name: file.name, size: file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`, url: URL.createObjectURL(file), source, analysis });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "This SVG could not be read.");
     }
@@ -231,6 +237,15 @@ export default function UploadWorkbench() {
           <article><span className={styles.fillIcon}>▰</span><div><strong>{stitchPlan.fill}</strong><small>Fill candidates</small></div><p>Broader areas with a closed edge.</p></article>
           <article className={stitchPlan.tooSmall ? styles.warningCard : ""}><span className={styles.smallIcon}>·</span><div><strong>{stitchPlan.tooSmall}</strong><small>Too small</small></div><p>Under the safe detail threshold.</p></article>
         </div>
+        {runningResult && <>
+          <div className={styles.metrics}>
+            <div><small>Running paths</small><strong>{runningResult.paths.length}</strong></div>
+            <div><small>Needle points</small><strong>{runningResult.stitchCount.toLocaleString()}</strong></div>
+            <div><small>Thread path</small><strong>{runningResult.totalLengthMm.toFixed(1)} mm</strong></div>
+            <div><small>Stitch length</small><strong>{runningResult.stitchLengthMm.toFixed(1)} mm</strong></div>
+          </div>
+          <p className={styles.heuristicNote}><span>02</span> These are now real running-stitch coordinates, recalculated whenever the embroidery size changes.</p>
+        </>}
         <p className={styles.heuristicNote}><span>01</span> This is a geometric recommendation, not a final digitization. You stay in control.</p>
       </section>}
       <input ref={inputRef} className={styles.hiddenInput} type="file" accept=".svg,image/svg+xml" onChange={handleChange}/>
