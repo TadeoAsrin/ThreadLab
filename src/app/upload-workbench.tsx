@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
 import { generateRunningStitches, type RunningStitchResult } from "./running-stitch";
+import { extractCenterlines, type CenterlineResult } from "./centerline";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const GEOMETRY_SELECTOR = "path,rect,circle,ellipse,line,polyline,polygon";
@@ -161,11 +162,23 @@ export default function UploadWorkbench() {
   const [isDragging, setIsDragging] = useState(false);
   const [targetWidth, setTargetWidth] = useState(80);
   const [runningResult, setRunningResult] = useState<RunningStitchResult | null>(null);
+  const [centerlineResult, setCenterlineResult] = useState<CenterlineResult | null>(null);
+  const [centerlineBusy, setCenterlineBusy] = useState(false);
 
   useEffect(() => () => { if (design) URL.revokeObjectURL(design.url); }, [design]);
   useEffect(() => {
     if (!design) { setRunningResult(null); return; }
     setRunningResult(generateRunningStitches(design.source, targetWidth / design.analysis.vectorWidth));
+  }, [design, targetWidth]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!design) { setCenterlineResult(null); return; }
+    setCenterlineBusy(true);
+    extractCenterlines(design.source, targetWidth)
+      .then((result) => { if (!cancelled) setCenterlineResult(result); })
+      .catch(() => { if (!cancelled) setCenterlineResult(null); })
+      .finally(() => { if (!cancelled) setCenterlineBusy(false); });
+    return () => { cancelled = true; };
   }, [design, targetWidth]);
 
   async function loadFile(file?: File) {
@@ -239,13 +252,20 @@ export default function UploadWorkbench() {
         </div>
         {runningResult && <>
           <div className={styles.metrics}>
-            <div><small>Running paths</small><strong>{runningResult.paths.length}</strong></div>
-            <div><small>Needle points</small><strong>{runningResult.stitchCount.toLocaleString()}</strong></div>
-            <div><small>Thread path</small><strong>{runningResult.totalLengthMm.toFixed(1)} mm</strong></div>
+            <div><small>Native running paths</small><strong>{runningResult.paths.length}</strong></div>
+            <div><small>Native needle points</small><strong>{runningResult.stitchCount.toLocaleString()}</strong></div>
+            <div><small>Native thread path</small><strong>{runningResult.totalLengthMm.toFixed(1)} mm</strong></div>
             <div><small>Stitch length</small><strong>{runningResult.stitchLengthMm.toFixed(1)} mm</strong></div>
           </div>
-          <p className={styles.heuristicNote}><span>02</span> These are now real running-stitch coordinates, recalculated whenever the embroidery size changes.</p>
+          <p className={styles.heuristicNote}><span>02</span> Native running coordinates come directly from open or stroked SVG geometry.</p>
         </>}
+        <div className={styles.metrics}>
+          <div><small>Recovered centerlines</small><strong>{centerlineBusy ? "…" : centerlineResult?.paths.length ?? 0}</strong></div>
+          <div><small>Recovered needle points</small><strong>{centerlineBusy ? "…" : (centerlineResult?.stitchCount ?? 0).toLocaleString()}</strong></div>
+          <div><small>Centerline thread path</small><strong>{centerlineBusy ? "…" : `${(centerlineResult?.totalLengthMm ?? 0).toFixed(1)} mm`}</strong></div>
+          <div><small>Centerline engine</small><strong>{centerlineBusy ? "Tracing" : "Skeleton"}</strong></div>
+        </div>
+        <p className={styles.heuristicNote}><span>03</span> Filled artwork is now thinned into a central skeleton so line-like shapes can become running-stitch routes.</p>
         <p className={styles.heuristicNote}><span>01</span> This is a geometric recommendation, not a final digitization. You stay in control.</p>
       </section>}
       <input ref={inputRef} className={styles.hiddenInput} type="file" accept=".svg,image/svg+xml" onChange={handleChange}/>
