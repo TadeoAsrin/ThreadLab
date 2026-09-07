@@ -1,4 +1,5 @@
 import type { CenterlinePath, CenterlinePoint, CenterlineResult } from "./centerline";
+import { assessEmbroideryDetails } from "./detail-intelligence";
 
 export type MachinePath = CenterlinePath & {
   sourceIndex: number;
@@ -33,10 +34,64 @@ export type MachinePlan = {
   artworkCoverageThreshold: number;
   artworkBridgeCount: number;
   consolidatedBlocks: number;
+  sourcePathCount: number;
+  cleanedPathCount: number;
+  removedDetailCount: number;
+  simplifiedDetailCount: number;
 };
 
 function distance(a: CenterlinePoint, b: CenterlinePoint) {
   return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
+function vectorPathLength(points: CenterlinePoint[]) {
+  let total = 0;
+  for (let index = 1; index < points.length; index += 1) total += distance(points[index - 1], points[index]);
+  return total;
+}
+
+function resampleVector(points: CenterlinePoint[], spacingVector: number) {
+  if (points.length < 2 || spacingVector <= 0) return [...points];
+  const result: CenterlinePoint[] = [points[0]];
+  let carry = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    let ax = points[index - 1].x;
+    let ay = points[index - 1].y;
+    const bx = points[index].x;
+    const by = points[index].y;
+    let segment = Math.hypot(bx - ax, by - ay);
+    while (segment + carry >= spacingVector && segment > 0) {
+      const needed = spacingVector - carry;
+      const t = needed / segment;
+      ax += (bx - ax) * t;
+      ay += (by - ay) * t;
+      result.push({ x: ax, y: ay });
+      segment = Math.hypot(bx - ax, by - ay);
+      carry = 0;
+    }
+    carry += segment;
+  }
+  const last = points[points.length - 1];
+  const tail = result[result.length - 1];
+  if (distance(last, tail) > spacingVector * 0.35) result.push(last);
+  return result;
+}
+
+function cleanedSourcePaths(centerlines: CenterlineResult, mmPerVectorUnit: number) {
+  const intelligence = assessEmbroideryDetails(centerlines);
+  if (!intelligence) return { paths: centerlines.paths, removed: 0, simplified: 0 };
+  const spacingVector = centerlines.stitchLengthMm / Math.max(mmPerVectorUnit, 0.000001);
+  const paths: CenterlinePath[] = [];
+  for (const detail of intelligence.details) {
+    if (detail.decision === "remove") continue;
+    const original = centerlines.paths[detail.index];
+    const points = detail.decision === "simplify" ? detail.simplifiedPoints : original.points;
+    const lengthVector = vectorPathLength(points);
+    const lengthMm = lengthVector * mmPerVectorUnit;
+    const stitches = resampleVector(points, spacingVector);
+    if (points.length >= 2 && stitches.length >= 2) paths.push({ points: [...points], stitches, lengthMm });
+  }
+  return { paths, removed: intelligence.remove, simplified: intelligence.simplify };
 }
 
 function reversePath(path: CenterlinePath, sourceIndex: number): MachinePath {
@@ -116,10 +171,11 @@ export function buildMachinePlan(
   artworkCoverageThreshold = 0.72,
 ): MachinePlan | null {
   if (!centerlines?.paths.length || targetWidthMm <= 0 || vectorWidth <= 0) return null;
-  const source = centerlines.paths.filter((path) => firstPoint(path) && lastPoint(path));
+  const mmPerVectorUnit = targetWidthMm / vectorWidth;
+  const cleaned = cleanedSourcePaths(centerlines, mmPerVectorUnit);
+  const source = cleaned.paths.filter((path) => firstPoint(path) && lastPoint(path));
   if (!source.length) return null;
 
-  const mmPerVectorUnit = targetWidthMm / vectorWidth;
   const remaining = new Set(source.map((_, index) => index));
   const ordered: MachinePath[] = [], jumps: TravelMove[] = [], bridges: StitchBridge[] = [];
   let firstIndex = 0, firstReverse = false, bestAnchor: CenterlinePoint | null = null;
@@ -154,13 +210,7 @@ export function buildMachinePlan(
     const artworkBridge = coherent && moveMm > bridgeThresholdMm && moveMm <= artworkBridgeMaxMm && coverage >= artworkCoverageThreshold;
 
     if (proximityBridge || artworkBridge) {
-      bridges.push({
-        from: currentEnd,
-        to: nextStart,
-        distanceMm: moveMm,
-        reason: artworkBridge ? "artwork" : "proximity",
-        artworkCoverage: coverage,
-      });
+      bridges.push({ from: currentEnd, to: nextStart, distanceMm: moveMm, reason: artworkBridge ? "artwork" : "proximity", artworkCoverage: coverage });
     } else {
       jumps.push({ from: currentEnd, to: nextStart, distanceMm: moveMm, trim: moveMm >= trimThresholdMm });
     }
@@ -181,5 +231,9 @@ export function buildMachinePlan(
     artworkCoverageThreshold,
     artworkBridgeCount: bridges.filter((bridge) => bridge.reason === "artwork").length,
     consolidatedBlocks: Math.max(1, ordered.length - bridges.length),
+    sourcePathCount: centerlines.paths.length,
+    cleanedPathCount: source.length,
+    removedDetailCount: cleaned.removed,
+    simplifiedDetailCount: cleaned.simplified,
   };
 }
