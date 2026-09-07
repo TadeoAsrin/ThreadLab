@@ -4,6 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import styles from "./page.module.css";
 import { generateRunningStitches, type RunningStitchResult } from "./running-stitch";
 import { extractCenterlines, type CenterlineResult } from "./centerline";
+import StitchPreview from "./stitch-preview";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const GEOMETRY_SELECTOR = "path,rect,circle,ellipse,line,polyline,polygon";
@@ -206,8 +207,13 @@ export default function UploadWorkbench() {
     <div className={styles.loadedDesign} aria-live="polite">
       <div className={styles.previewCard}>
         <div className={styles.previewCanvas}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={design.url} alt={`Preview of ${design.name}`} />
+          <StitchPreview
+            source={design.source}
+            imageUrl={design.url}
+            alt={`Preview of ${design.name}`}
+            centerlineResult={centerlineResult}
+            busy={centerlineBusy}
+          />
           <span className={styles.localBadge}>Analyzed locally</span>
         </div>
         <div className={styles.fileBar}>
