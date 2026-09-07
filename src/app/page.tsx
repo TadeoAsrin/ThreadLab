@@ -1,4 +1,5 @@
 import styles from "./page.module.css";
+import UploadWorkbench from "./upload-workbench";
 
 function ThreadMark() {
   return <svg aria-hidden="true" className={styles.threadMark} viewBox="0 0 48 48" fill="none"><path d="M8 24h32M24 8c0 9-8 9-8 16s8 7 8 16M24 8c0 9 8 9 8 16s-8 7-8 16"/><circle cx="24" cy="24" r="3.25"/></svg>;
@@ -36,7 +37,7 @@ export default function Home() {
       </section>
       <section className={styles.workbench} id="workbench">
         <div><p className={styles.eyebrow}>Your first workbench</p><h2>Bring in a line.<br/>We’ll help it stitch.</h2></div>
-        <button className={styles.dropzone} type="button"><span className={styles.plus}>+</span><span><strong>Choose an SVG</strong><small>or drop it here</small></span><span className={styles.fileType}>.SVG</span></button>
+        <UploadWorkbench />
       </section>
       <footer className={styles.footer}><span>Built for the space between drawing and thread.</span><span>ThreadLab · Córdoba</span></footer>
     </main>
