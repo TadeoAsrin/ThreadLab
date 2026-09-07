@@ -87,6 +87,21 @@ export default function StitchPreview({ source, imageUrl, alt, centerlineResult,
             />
           )))}
 
+          {showRoute && machinePlan?.bridges.map((bridge, index) => (
+            <line
+              key={`bridge-${index}`}
+              x1={bridge.from.x}
+              y1={bridge.from.y}
+              x2={bridge.to.x}
+              y2={bridge.to.y}
+              stroke="#6f8066"
+              strokeWidth={1.15}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+              opacity={0.95}
+            />
+          ))}
+
           {showRoute && machinePlan?.jumps.map((jump, index) => (
             <g key={`jump-${index}`}>
               <line
