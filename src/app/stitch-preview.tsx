@@ -2,14 +2,16 @@
 
 import { useMemo, useState } from "react";
 import type { CenterlineResult } from "./centerline";
+import type { MachinePlan } from "./machine-plan";
 
-type PreviewMode = "artwork" | "centerline" | "stitches";
+type PreviewMode = "artwork" | "centerline" | "stitches" | "route";
 
 type StitchPreviewProps = {
   source: string;
   imageUrl: string;
   alt: string;
   centerlineResult: CenterlineResult | null;
+  machinePlan: MachinePlan | null;
   busy: boolean;
 };
 
@@ -27,12 +29,14 @@ function pointsAttribute(points: { x: number; y: number }[]) {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
 }
 
-export default function StitchPreview({ source, imageUrl, alt, centerlineResult, busy }: StitchPreviewProps) {
+export default function StitchPreview({ source, imageUrl, alt, centerlineResult, machinePlan, busy }: StitchPreviewProps) {
   const [mode, setMode] = useState<PreviewMode>("artwork");
   const [minX, minY, width, height] = useMemo(() => readViewBox(source), [source]);
   const paths = centerlineResult?.paths ?? [];
+  const routePaths = machinePlan?.paths ?? [];
   const showOverlay = mode !== "artwork" && paths.length > 0;
   const showStitches = mode === "stitches";
+  const showRoute = mode === "route";
 
   return (
     <div style={{ position: "relative", width: "100%", height: 230 }}>
@@ -46,7 +50,7 @@ export default function StitchPreview({ source, imageUrl, alt, centerlineResult,
           width: "100%",
           height: "100%",
           objectFit: "contain",
-          opacity: mode === "artwork" ? 1 : 0.22,
+          opacity: mode === "artwork" ? 1 : 0.18,
           transition: "opacity 160ms ease",
         }}
       />
@@ -55,22 +59,23 @@ export default function StitchPreview({ source, imageUrl, alt, centerlineResult,
         <svg
           viewBox={`${minX} ${minY} ${width} ${height}`}
           preserveAspectRatio="xMidYMid meet"
-          aria-label={showStitches ? "Stitch preview" : "Centerline preview"}
+          aria-label={showRoute ? "Machine route preview" : showStitches ? "Stitch preview" : "Centerline preview"}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }}
         >
-          {paths.map((path, index) => (
+          {(showRoute ? routePaths : paths).map((path, index) => (
             <polyline
               key={`route-${index}`}
-              points={pointsAttribute(showStitches ? path.stitches : path.points)}
+              points={pointsAttribute(showStitches || showRoute ? path.stitches : path.points)}
               fill="none"
-              stroke={showStitches ? "#1e211d" : "#e85d34"}
+              stroke={showStitches || showRoute ? "#1e211d" : "#e85d34"}
               strokeWidth={Math.max(width / 750, 0.35)}
               strokeLinecap="round"
               strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
-              opacity={showStitches ? 0.68 : 0.92}
+              opacity={showStitches ? 0.68 : showRoute ? 0.76 : 0.92}
             />
           ))}
+
           {showStitches && paths.flatMap((path, pathIndex) => path.stitches.map((point, stitchIndex) => (
             <circle
               key={`needle-${pathIndex}-${stitchIndex}`}
@@ -81,6 +86,25 @@ export default function StitchPreview({ source, imageUrl, alt, centerlineResult,
               vectorEffect="non-scaling-stroke"
             />
           )))}
+
+          {showRoute && machinePlan?.jumps.map((jump, index) => (
+            <g key={`jump-${index}`}>
+              <line
+                x1={jump.from.x}
+                y1={jump.from.y}
+                x2={jump.to.x}
+                y2={jump.to.y}
+                stroke={jump.trim ? "#e85d34" : "#7d8079"}
+                strokeWidth={jump.trim ? 1.15 : 0.85}
+                strokeDasharray={jump.trim ? "5 3" : "2 3"}
+                vectorEffect="non-scaling-stroke"
+                opacity={0.82}
+              />
+              {jump.trim && (
+                <circle cx={jump.from.x} cy={jump.from.y} r={1.15} fill="#e85d34" vectorEffect="non-scaling-stroke" />
+              )}
+            </g>
+          ))}
         </svg>
       )}
 
@@ -101,9 +125,9 @@ export default function StitchPreview({ source, imageUrl, alt, centerlineResult,
           zIndex: 2,
         }}
       >
-        {(["artwork", "centerline", "stitches"] as PreviewMode[]).map((option) => {
+        {(["artwork", "centerline", "stitches", "route"] as PreviewMode[]).map((option) => {
           const active = mode === option;
-          const disabled = option !== "artwork" && (busy || paths.length === 0);
+          const disabled = option !== "artwork" && (busy || paths.length === 0 || (option === "route" && !machinePlan));
           return (
             <button
               key={option}
