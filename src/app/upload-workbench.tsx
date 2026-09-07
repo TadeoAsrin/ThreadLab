@@ -1,9 +1,10 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./page.module.css";
 import { generateRunningStitches, type RunningStitchResult } from "./running-stitch";
 import { extractCenterlines, type CenterlineResult } from "./centerline";
+import { buildMachinePlan } from "./machine-plan";
 import StitchPreview from "./stitch-preview";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -202,6 +203,10 @@ export default function UploadWorkbench() {
   function handleChange(event: ChangeEvent<HTMLInputElement>) { loadFile(event.target.files?.[0]); event.target.value = ""; }
   function handleDrop(event: DragEvent<HTMLDivElement>) { event.preventDefault(); setIsDragging(false); loadFile(event.dataTransfer.files[0]); }
   const stitchPlan = design ? buildStitchPlan(design.analysis.geometry, targetWidth / design.analysis.vectorWidth) : null;
+  const machinePlan = useMemo(
+    () => buildMachinePlan(centerlineResult, targetWidth, design?.analysis.vectorWidth ?? 1),
+    [centerlineResult, targetWidth, design],
+  );
 
   if (design) return (
     <div className={styles.loadedDesign} aria-live="polite">
@@ -212,6 +217,7 @@ export default function UploadWorkbench() {
             imageUrl={design.url}
             alt={`Preview of ${design.name}`}
             centerlineResult={centerlineResult}
+            machinePlan={machinePlan}
             busy={centerlineBusy}
           />
           <span className={styles.localBadge}>Analyzed locally</span>
@@ -271,7 +277,16 @@ export default function UploadWorkbench() {
           <div><small>Centerline thread path</small><strong>{centerlineBusy ? "…" : `${(centerlineResult?.totalLengthMm ?? 0).toFixed(1)} mm`}</strong></div>
           <div><small>Centerline engine</small><strong>{centerlineBusy ? "Tracing" : "Skeleton"}</strong></div>
         </div>
-        <p className={styles.heuristicNote}><span>03</span> Filled artwork is now thinned into a central skeleton so line-like shapes can become running-stitch routes.</p>
+        <p className={styles.heuristicNote}><span>03</span> Filled artwork is thinned and cleaned into a central skeleton so line-like shapes can become running-stitch routes.</p>
+        {machinePlan && <>
+          <div className={styles.metrics}>
+            <div><small>Ordered routes</small><strong>{machinePlan.paths.length}</strong></div>
+            <div><small>Jumps</small><strong>{machinePlan.jumps.length}</strong></div>
+            <div><small>Trims</small><strong>{machinePlan.trimCount}</strong></div>
+            <div><small>Jump travel</small><strong>{machinePlan.totalJumpMm.toFixed(1)} mm</strong></div>
+          </div>
+          <p className={styles.heuristicNote}><span>04</span> Routes are ordered by nearest endpoint. Disconnected moves become jumps; jumps of {machinePlan.trimThresholdMm.toFixed(1)} mm or more are marked for trim.</p>
+        </>}
         <p className={styles.heuristicNote}><span>01</span> This is a geometric recommendation, not a final digitization. You stay in control.</p>
       </section>}
       <input ref={inputRef} className={styles.hiddenInput} type="file" accept=".svg,image/svg+xml" onChange={handleChange}/>
