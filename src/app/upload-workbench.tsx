@@ -280,12 +280,18 @@ export default function UploadWorkbench() {
         <p className={styles.heuristicNote}><span>03</span> Filled artwork is thinned and cleaned into a central skeleton so line-like shapes can become running-stitch routes.</p>
         {machinePlan && <>
           <div className={styles.metrics}>
-            <div><small>Ordered routes</small><strong>{machinePlan.paths.length}</strong></div>
+            <div><small>Continuous blocks</small><strong>{machinePlan.consolidatedBlocks}</strong></div>
+            <div><small>Stitched bridges</small><strong>{machinePlan.bridges.length}</strong></div>
             <div><small>Jumps</small><strong>{machinePlan.jumps.length}</strong></div>
             <div><small>Trims</small><strong>{machinePlan.trimCount}</strong></div>
-            <div><small>Jump travel</small><strong>{machinePlan.totalJumpMm.toFixed(1)} mm</strong></div>
           </div>
-          <p className={styles.heuristicNote}><span>04</span> Routes are ordered by nearest endpoint. Disconnected moves become jumps; jumps of {machinePlan.trimThresholdMm.toFixed(1)} mm or more are marked for trim.</p>
+          <div className={styles.metrics}>
+            <div><small>Bridge thread</small><strong>{machinePlan.bridgeThreadMm.toFixed(1)} mm</strong></div>
+            <div><small>Jump travel</small><strong>{machinePlan.totalJumpMm.toFixed(1)} mm</strong></div>
+            <div><small>Bridge limit</small><strong>{machinePlan.bridgeThresholdMm.toFixed(2)} mm</strong></div>
+            <div><small>Trim limit</small><strong>{machinePlan.trimThresholdMm.toFixed(1)} mm</strong></div>
+          </div>
+          <p className={styles.heuristicNote}><span>04</span> Nearby, directionally coherent gaps up to {machinePlan.bridgeThresholdMm.toFixed(2)} mm are stitched as bridges. Larger disconnected moves remain jumps; jumps of {machinePlan.trimThresholdMm.toFixed(1)} mm or more are marked for trim.</p>
         </>}
         <p className={styles.heuristicNote}><span>01</span> This is a geometric recommendation, not a final digitization. You stay in control.</p>
       </section>}
