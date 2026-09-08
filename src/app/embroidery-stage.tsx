@@ -52,7 +52,7 @@ export default function EmbroideryStage({ source, sourceName, centerlines, targe
   return <section style={{ marginTop: 28, paddingTop: 26, borderTop: "1px solid rgba(30,33,29,.14)" }} aria-labelledby="machine-file-title">
     <header style={{ display: "flex", justifyContent: "space-between", gap: 20, alignItems: "flex-start" }}>
       <div><span style={{ color: "#e85d34", font: mono, letterSpacing: ".14em", textTransform: "uppercase" }}>Unified workshop</span><h3 id="machine-file-title" style={{ margin: "8px 0 0", fontSize: 25, letterSpacing: "-.04em" }}>One plan. Ready for the machine.</h3></div>
-      <span style={{ padding: "8px 10px", borderRadius: 3, color: plan?.safeToExport ? "#52624b" : "#a3482d", background: plan?.safeToExport ? "#52624b20" : "#e85d3420", font: mono, letterSpacing: ".08em", textTransform: "uppercase" }}>{fillBusy || busy ? "Calculating" : plan?.safeToExport ? "Safety checks passed" : "Export blocked"}</span>
+      <span style={{ padding: "8px 10px", borderRadius: 3, color: plan?.safeToExport ? "#52624b" : "#a3482d", background: plan?.safeToExport ? "#52624b20" : "#e85d3420", font: mono, letterSpacing: ".08em", textTransform: "uppercase" }}>{fillBusy || busy ? "Calculating" : plan?.safeToExport ? "Machine + digitization passed" : "Export blocked"}</span>
     </header>
 
     {intelligence && <div style={{ marginTop: 20, padding: 18, borderRadius: 7, background: "#1e211d", color: "#f7f2e7", display: "grid", gap: 15 }}>
@@ -63,10 +63,10 @@ export default function EmbroideryStage({ source, sourceName, centerlines, targe
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(105px,1fr))", borderTop: "1px solid #f7f2e729", borderLeft: "1px solid #f7f2e729" }}>
         {[
           ["Running", intelligence.runningDetails], ["Bean", intelligence.beanDetails], ["Satin", intelligence.satinDetails],
-          ["Fill", intelligence.fillDetails], ["Omitted", intelligence.omittedDetails], ["Joined", intelligence.joinedContinuities],
+          ["Fill", intelligence.fillDetails], ["Omitted", intelligence.omittedDetails], ["Rebuilt", plan?.reconstructedContinuities ?? 0],
         ].map(([label, value]) => <div key={label} style={{ padding: 10, borderRight: "1px solid #f7f2e729", borderBottom: "1px solid #f7f2e729" }}><small style={{ display: "block", color: "#f7f2e788", font: mono, textTransform: "uppercase" }}>{label}</small><strong style={{ display: "block", marginTop: 4 }}>{value}</strong></div>)}
       </div>
-      <p style={{ margin: 0, color: "#f7f2e7aa", font: "10px/1.55 var(--font-geist-mono)" }}>{intelligence.summary} The score weighs confidence, fragmentation, jumps and trims—not just file validity.</p>
+      <p style={{ margin: 0, color: "#f7f2e7aa", font: "10px/1.55 var(--font-geist-mono)" }}>{intelligence.summary} Bridges are accepted only when they remain inside the original artwork. A score below 55 blocks export.</p>
     </div>}
 
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.3fr) minmax(260px,.7fr)", gap: 20, marginTop: 22 }}>
