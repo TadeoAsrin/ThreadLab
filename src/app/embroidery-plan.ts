@@ -1,7 +1,7 @@
 import type { CenterlinePoint, CenterlineResult } from "./centerline";
 import type { FillResult } from "./fill-engine";
-import { pointFallsInFill } from "./fill-engine";
 import type { SatinResult } from "./satin-engine";
+import { finalizeDigitizationReport, interpretDigitization, type DigitizationReport } from "./digitization-intelligence";
 
 export type StitchKind = "running" | "bean" | "satin" | "fill-underlay" | "fill";
 export type EmbroideryBlock = { id: string; kind: StitchKind; color: string; points: CenterlinePoint[]; groupId?: string; sequence?: number };
@@ -23,6 +23,7 @@ export type EmbroideryPlan = {
   heightMm: number;
   estimatedMinutes: number;
   subdividedStitches: number;
+  intelligence: DigitizationReport | null;
 };
 
 const distance = (a: CenterlinePoint, b: CenterlinePoint) => Math.hypot(b.x - a.x, b.y - a.y);
@@ -53,6 +54,43 @@ function bean(points: CenterlinePoint[]) {
   const output = [points[0]];
   for (let index = 1; index < points.length; index += 1) output.push(points[index], points[index - 1], points[index]);
   return output;
+}
+
+function endpointDirection(points: CenterlinePoint[], atStart: boolean) {
+  const origin = atStart ? points[0] : points[points.length - 1];
+  let neighbor = origin;
+  for (let offset = 1; offset < points.length; offset += 1) {
+    const candidate = atStart ? points[offset] : points[points.length - 1 - offset];
+    if (distance(origin, candidate) > 0.01) { neighbor = candidate; break; }
+  }
+  const dx = origin.x - neighbor.x, dy = origin.y - neighbor.y, length = Math.hypot(dx, dy) || 1;
+  return { x: dx / length, y: dy / length };
+}
+
+function joinRunningContinuities(blocks: EmbroideryBlock[], maximumGapMm = 1.4, minimumAlignment = 0.58) {
+  const working = blocks.map((block) => ({ ...block, points: [...block.points] }));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer: for (let leftIndex = 0; leftIndex < working.length; leftIndex += 1) for (let rightIndex = leftIndex + 1; rightIndex < working.length; rightIndex += 1) {
+      const left = working[leftIndex], right = working[rightIndex];
+      if (left.color !== right.color || left.kind !== right.kind || !["running", "bean"].includes(left.kind)) continue;
+      for (const leftStart of [false, true]) for (const rightStart of [true, false]) {
+        const a = leftStart ? first(left) : last(left), b = rightStart ? first(right) : last(right);
+        const gap = distance(a, b);
+        if (gap > maximumGapMm) continue;
+        const ad = endpointDirection(left.points, leftStart), bd = endpointDirection(right.points, rightStart);
+        if (-(ad.x * bd.x + ad.y * bd.y) < minimumAlignment) continue;
+        const leftPoints = leftStart ? [...left.points].reverse() : left.points;
+        const rightPoints = rightStart ? right.points : [...right.points].reverse();
+        working[leftIndex] = { ...left, id: `${left.id}+${right.id}`, points: [...leftPoints, ...rightPoints] };
+        working.splice(rightIndex, 1);
+        changed = true;
+        break outer;
+      }
+    }
+  }
+  return working;
 }
 
 function nearestOrder(blocks: EmbroideryBlock[]) {
@@ -92,13 +130,16 @@ function chooseHoop(widthMm: number, heightMm: number): Hoop | null {
 
 export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin: SatinResult | null, fill: FillResult | null, targetWidthMm: number, stitchMode: "running" | "bean"): EmbroideryPlan | null {
   if (!centerlines) return null;
-  const satinSources = new Set(satin?.columns.map((column) => column.sourceIndex) ?? []);
+  const intelligence = interpretDigitization(centerlines, satin, fill, stitchMode);
+  const decisions = new Map(intelligence?.decisions.map((decision) => [decision.sourceIndex, decision]) ?? []);
   const blocks: EmbroideryBlock[] = [];
   centerlines.paths.forEach((path, index) => {
-    if (satinSources.has(index)) return;
-    if (fill && path.points.filter((point) => pointFallsInFill(centerlines, fill, point)).length / Math.max(1, path.points.length) > 0.45) return;
-    const converted = path.stitches.map((point) => toMm(point, centerlines, targetWidthMm));
-    blocks.push({ id: `running-${index}`, kind: stitchMode, color: "#000000", points: stitchMode === "bean" ? bean(converted) : converted });
+    const decision = decisions.get(index);
+    if (!decision || ["omit", "satin", "fill"].includes(decision.role)) return;
+    const kind: "running" | "bean" = decision.role === "bean" ? "bean" : "running";
+    const source = decision.points.length === path.points.length ? path.stitches : decision.points;
+    const converted = source.map((point) => toMm(point, centerlines, targetWidthMm));
+    blocks.push({ id: `${kind}-${index}`, kind, color: "#000000", points: kind === "bean" ? bean(converted) : converted });
   });
   satin?.columns.forEach((column, index) => blocks.push({ id: `satin-${index}`, kind: "satin", color: "#000000", points: column.stitches.map((point) => toMm(point, centerlines, targetWidthMm)) }));
   fill?.blocks.forEach((block, index) => {
@@ -107,7 +148,8 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     blocks.push({ id: `fill-${index}`, groupId, sequence: 1, kind: "fill", color: block.color, points: block.stitches.map((point) => toMm(point, centerlines, targetWidthMm)) });
   });
   let subdividedStitches = 0;
-  const ordered = nearestOrder(blocks.filter((block) => block.points.length >= 2)).map((block) => {
+  const continuous = joinRunningContinuities(blocks.filter((block) => block.points.length >= 2));
+  const ordered = nearestOrder(continuous).map((block) => {
     const safe = subdivideLongSegments(block.points);
     subdividedStitches += safe.added;
     return { ...block, points: safe.points };
@@ -141,6 +183,7 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     { level: ordered.length ? "pass" : "block", message: ordered.length ? `${ordered.length} stitch blocks are ready.` : "No stitch blocks were generated." },
   ];
   const colors = [...new Set(ordered.map((block) => block.color))];
+  const finalizedIntelligence = finalizeDigitizationReport(intelligence, ordered.length, commands.filter((command) => command.type === "jump").length, commands.filter((command) => command.type === "jump" && command.trim).length);
   return {
     blocks: ordered, commands, colors, hoop, checks,
     safeToExport: !checks.some((check) => check.level === "block"),
@@ -150,6 +193,6 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     colorChanges: Math.max(0, colors.length - 1),
     widthMm: targetWidthMm, heightMm: targetHeightMm,
     estimatedMinutes: stitchCommands.length / 650 + commands.filter((command) => command.type === "jump").length * 0.04,
-    subdividedStitches,
+    subdividedStitches, intelligence: finalizedIntelligence,
   };
 }
