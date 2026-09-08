@@ -31,19 +31,6 @@ export type DigitizationReport = {
   summary: string;
 };
 
-function curvature(points: CenterlinePoint[]) {
-  if (points.length < 3) return 0;
-  let turn = 0;
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const a = points[index - 1], b = points[index], c = points[index + 1];
-    const ab = Math.atan2(b.y - a.y, b.x - a.x), bc = Math.atan2(c.y - b.y, c.x - b.x);
-    let delta = Math.abs(bc - ab);
-    if (delta > Math.PI) delta = Math.PI * 2 - delta;
-    turn += delta;
-  }
-  return turn / (points.length - 2);
-}
-
 export function interpretDigitization(
   centerlines: CenterlineResult | null,
   satin: SatinResult | null,
@@ -69,13 +56,13 @@ export function interpretDigitization(
       sourceIndex, role: "satin", confidence: 88, points,
       reason: "Stable narrow column with sufficient rung coverage; resolved as satin.",
     };
-    const expressive = path.lengthMm <= 14 || curvature(points) > 0.55;
-    const role: DigitizationRole = preferredLineRole === "bean" || expressive ? "bean" : "running";
+    // Bean is an intentional reinforcement choice, never a fallback for fragmented geometry.
+    const role: DigitizationRole = preferredLineRole;
     return {
       sourceIndex, role, confidence: assessment?.decision === "simplify" ? 74 : 82, points,
       reason: assessment?.decision === "simplify"
         ? `Simplified from ${assessment.originalPoints} nodes before ${role} stitching.`
-        : expressive ? "Short or expressive line reinforced with bean stitch." : "Long clean contour resolved as running stitch.",
+        : role === "bean" ? "Intentional line reinforced with bean stitch." : "Clean contour resolved as running stitch.",
     };
   });
   const count = (role: DigitizationRole) => decisions.filter((decision) => decision.role === role).length;
@@ -98,20 +85,20 @@ export function interpretDigitization(
   };
 }
 
-export function finalizeDigitizationReport(report: DigitizationReport | null, optimizedBlocks: number, jumps: number, trims: number) {
+export function finalizeDigitizationReport(report: DigitizationReport | null, optimizedBlocks: number, jumps: number, trims: number, reconstructed: number) {
   if (!report) return null;
   const joinedContinuities = Math.max(0, report.originalBlocks - optimizedBlocks);
-  const movementPenalty = Math.min(42, jumps * 1.15 + trims * 1.8);
+  const movementPenalty = Math.min(42, jumps * 0.8 + trims * 1.5);
   const fragmentationPenalty = report.retainedDetails ? Math.min(25, (optimizedBlocks / report.retainedDetails) * 8) : 25;
   const confidence = report.decisions.length
     ? report.decisions.reduce((sum, decision) => sum + decision.confidence, 0) / report.decisions.length
     : 0;
-  const score = Math.max(0, Math.min(100, Math.round(confidence - movementPenalty - fragmentationPenalty + joinedContinuities * 0.8)));
+  const score = Math.max(0, Math.min(100, Math.round(confidence - movementPenalty - fragmentationPenalty + joinedContinuities * 0.8 + reconstructed * 0.6)));
   return {
     ...report,
     optimizedBlocks,
     joinedContinuities,
     score,
-    summary: `${report.retainedDetails} details retained, ${report.omittedDetails} omitted and ${joinedContinuities} continuities joined.`,
+    summary: `${report.retainedDetails} details retained, ${report.omittedDetails} omitted and ${reconstructed} semantic continuities reconstructed.`,
   };
 }
