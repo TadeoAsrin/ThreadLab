@@ -22,11 +22,25 @@ export type EmbroideryPlan = {
   widthMm: number;
   heightMm: number;
   estimatedMinutes: number;
+  subdividedStitches: number;
 };
 
 const distance = (a: CenterlinePoint, b: CenterlinePoint) => Math.hypot(b.x - a.x, b.y - a.y);
 const first = (block: EmbroideryBlock) => block.points[0];
 const last = (block: EmbroideryBlock) => block.points[block.points.length - 1];
+
+function subdivideLongSegments(points: CenterlinePoint[], maximumMm = 6.5) {
+  if (points.length < 2) return { points, added: 0 };
+  const output = [points[0]];
+  let added = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const from = points[index - 1], to = points[index], length = distance(from, to);
+    const parts = Math.max(1, Math.ceil(length / maximumMm));
+    for (let part = 1; part <= parts; part += 1) output.push({ x: from.x + (to.x - from.x) * (part / parts), y: from.y + (to.y - from.y) * (part / parts) });
+    added += parts - 1;
+  }
+  return { points: output, added };
+}
 
 function toMm(point: CenterlinePoint, result: CenterlineResult, targetWidthMm: number): CenterlinePoint {
   const [minX, minY, width, height] = result.viewBox;
@@ -92,7 +106,12 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     if (block.underlay.length) blocks.push({ id: `underlay-${index}`, groupId, sequence: 0, kind: "fill-underlay", color: block.color, points: block.underlay.map((point) => toMm(point, centerlines, targetWidthMm)) });
     blocks.push({ id: `fill-${index}`, groupId, sequence: 1, kind: "fill", color: block.color, points: block.stitches.map((point) => toMm(point, centerlines, targetWidthMm)) });
   });
-  const ordered = nearestOrder(blocks.filter((block) => block.points.length >= 2));
+  let subdividedStitches = 0;
+  const ordered = nearestOrder(blocks.filter((block) => block.points.length >= 2)).map((block) => {
+    const safe = subdivideLongSegments(block.points);
+    subdividedStitches += safe.added;
+    return { ...block, points: safe.points };
+  });
   const commands: EmbroideryCommand[] = [];
   let cursor: CenterlinePoint = { x: 0, y: 0 }, activeColor = "";
   for (const block of ordered) {
@@ -117,6 +136,7 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     { level: hoop ? "pass" : "block", message: hoop ? `Fits the ${hoop.name} mm hoop with a 1 mm margin.` : "Design exceeds the safe area of the 130 × 180 mm hoop." },
     { level: invalid ? "block" : "pass", message: invalid ? "Invalid machine coordinates were found." : "All machine coordinates are finite." },
     { level: maxStitch > 7 ? "block" : "pass", message: maxStitch > 7 ? `A ${maxStitch.toFixed(1)} mm stitch exceeds the 7 mm safety limit.` : `Longest stitch is ${maxStitch.toFixed(1)} mm.` },
+    { level: "pass", message: subdividedStitches ? `${subdividedStitches} long movements were safely subdivided.` : "No long movements needed subdivision." },
     { level: stitchCommands.length > 100000 ? "block" : stitchCommands.length > 60000 ? "warning" : "pass", message: `${stitchCommands.length.toLocaleString()} needle points in the plan.` },
     { level: ordered.length ? "pass" : "block", message: ordered.length ? `${ordered.length} stitch blocks are ready.` : "No stitch blocks were generated." },
   ];
@@ -130,5 +150,6 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     colorChanges: Math.max(0, colors.length - 1),
     widthMm: targetWidthMm, heightMm: targetHeightMm,
     estimatedMinutes: stitchCommands.length / 650 + commands.filter((command) => command.type === "jump").length * 0.04,
+    subdividedStitches,
   };
 }
