@@ -23,6 +23,7 @@ export type EmbroideryPlan = {
   heightMm: number;
   estimatedMinutes: number;
   subdividedStitches: number;
+  reconstructedContinuities: number;
   intelligence: DigitizationReport | null;
 };
 
@@ -67,8 +68,35 @@ function endpointDirection(points: CenterlinePoint[], atStart: boolean) {
   return { x: dx / length, y: dy / length };
 }
 
-function joinRunningContinuities(blocks: EmbroideryBlock[], maximumGapMm = 1.4, minimumAlignment = 0.58) {
+function mmToMask(point: CenterlinePoint, result: CenterlineResult, targetWidthMm: number) {
+  const targetHeightMm = targetWidthMm * result.viewBox[3] / result.viewBox[2];
+  return {
+    x: ((point.x + targetWidthMm / 2) / targetWidthMm) * (result.rasterWidth - 1),
+    y: ((point.y + targetHeightMm / 2) / targetHeightMm) * (result.rasterHeight - 1),
+  };
+}
+
+function bridgeBelongsToArtwork(a: CenterlinePoint, b: CenterlinePoint, result: CenterlineResult, targetWidthMm: number) {
+  const length = distance(a, b);
+  if (length <= 0.45) return true;
+  const samples = Math.max(4, Math.ceil(length / 0.18));
+  let hits = 0;
+  for (let index = 0; index <= samples; index += 1) {
+    const ratio = index / samples;
+    const pixel = mmToMask({ x: a.x + (b.x - a.x) * ratio, y: a.y + (b.y - a.y) * ratio }, result, targetWidthMm);
+    let hit = false;
+    for (let dy = -1; dy <= 1 && !hit; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+      const x = Math.round(pixel.x + dx), y = Math.round(pixel.y + dy);
+      if (x >= 0 && y >= 0 && x < result.rasterWidth && y < result.rasterHeight && result.artworkMask[y * result.rasterWidth + x]) { hit = true; break; }
+    }
+    if (hit) hits += 1;
+  }
+  return hits / (samples + 1) >= 0.72;
+}
+
+function joinRunningContinuities(blocks: EmbroideryBlock[], result: CenterlineResult, targetWidthMm: number, maximumGapMm = 2.4, minimumAlignment = 0.12) {
   const working = blocks.map((block) => ({ ...block, points: [...block.points] }));
+  let reconstructed = 0;
   let changed = true;
   while (changed) {
     changed = false;
@@ -81,16 +109,18 @@ function joinRunningContinuities(blocks: EmbroideryBlock[], maximumGapMm = 1.4, 
         if (gap > maximumGapMm) continue;
         const ad = endpointDirection(left.points, leftStart), bd = endpointDirection(right.points, rightStart);
         if (-(ad.x * bd.x + ad.y * bd.y) < minimumAlignment) continue;
+        if (!bridgeBelongsToArtwork(a, b, result, targetWidthMm)) continue;
         const leftPoints = leftStart ? [...left.points].reverse() : left.points;
         const rightPoints = rightStart ? right.points : [...right.points].reverse();
         working[leftIndex] = { ...left, id: `${left.id}+${right.id}`, points: [...leftPoints, ...rightPoints] };
         working.splice(rightIndex, 1);
+        reconstructed += 1;
         changed = true;
         break outer;
       }
     }
   }
-  return working;
+  return { blocks: working, reconstructed };
 }
 
 function nearestOrder(blocks: EmbroideryBlock[]) {
@@ -148,8 +178,8 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     blocks.push({ id: `fill-${index}`, groupId, sequence: 1, kind: "fill", color: block.color, points: block.stitches.map((point) => toMm(point, centerlines, targetWidthMm)) });
   });
   let subdividedStitches = 0;
-  const continuous = joinRunningContinuities(blocks.filter((block) => block.points.length >= 2));
-  const ordered = nearestOrder(continuous).map((block) => {
+  const reconstruction = joinRunningContinuities(blocks.filter((block) => block.points.length >= 2), centerlines, targetWidthMm);
+  const ordered = nearestOrder(reconstruction.blocks).map((block) => {
     const safe = subdivideLongSegments(block.points);
     subdividedStitches += safe.added;
     return { ...block, points: safe.points };
@@ -174,6 +204,10 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
   }
   const targetHeightMm = targetWidthMm * centerlines.viewBox[3] / centerlines.viewBox[2];
   const hoop = chooseHoop(targetWidthMm, targetHeightMm);
+  const jumpCount = commands.filter((command) => command.type === "jump").length;
+  const trimCount = commands.filter((command) => command.type === "jump" && command.trim).length;
+  const finalizedIntelligence = finalizeDigitizationReport(intelligence, ordered.length, jumpCount, trimCount, reconstruction.reconstructed);
+  const digitizationLevel: SafetyCheck["level"] = !finalizedIntelligence || finalizedIntelligence.score < 55 ? "block" : finalizedIntelligence.score < 70 ? "warning" : "pass";
   const checks: SafetyCheck[] = [
     { level: hoop ? "pass" : "block", message: hoop ? `Fits the ${hoop.name} mm hoop with a 1 mm margin.` : "Design exceeds the safe area of the 130 × 180 mm hoop." },
     { level: invalid ? "block" : "pass", message: invalid ? "Invalid machine coordinates were found." : "All machine coordinates are finite." },
@@ -181,18 +215,18 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     { level: "pass", message: subdividedStitches ? `${subdividedStitches} long movements were safely subdivided.` : "No long movements needed subdivision." },
     { level: stitchCommands.length > 100000 ? "block" : stitchCommands.length > 60000 ? "warning" : "pass", message: `${stitchCommands.length.toLocaleString()} needle points in the plan.` },
     { level: ordered.length ? "pass" : "block", message: ordered.length ? `${ordered.length} stitch blocks are ready.` : "No stitch blocks were generated." },
+    { level: digitizationLevel, message: finalizedIntelligence ? `Digitization score is ${finalizedIntelligence.score}/100${digitizationLevel === "block" ? "; semantic reconstruction is required before export." : "."}` : "Digitization quality could not be assessed." },
   ];
   const colors = [...new Set(ordered.map((block) => block.color))];
-  const finalizedIntelligence = finalizeDigitizationReport(intelligence, ordered.length, commands.filter((command) => command.type === "jump").length, commands.filter((command) => command.type === "jump" && command.trim).length);
   return {
     blocks: ordered, commands, colors, hoop, checks,
     safeToExport: !checks.some((check) => check.level === "block"),
     stitchCount: stitchCommands.length,
-    jumpCount: commands.filter((command) => command.type === "jump").length,
-    trimCount: commands.filter((command) => command.type === "jump" && command.trim).length,
+    jumpCount,
+    trimCount,
     colorChanges: Math.max(0, colors.length - 1),
     widthMm: targetWidthMm, heightMm: targetHeightMm,
     estimatedMinutes: stitchCommands.length / 650 + commands.filter((command) => command.type === "jump").length * 0.04,
-    subdividedStitches, intelligence: finalizedIntelligence,
+    subdividedStitches, reconstructedContinuities: reconstruction.reconstructed, intelligence: finalizedIntelligence,
   };
 }
