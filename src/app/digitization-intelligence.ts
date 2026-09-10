@@ -8,6 +8,7 @@ export type DigitizationRole = "running" | "bean" | "satin" | "fill" | "omit";
 
 export type DigitizationDecision = {
   sourceIndex: number;
+  sourceElement: number | null;
   role: DigitizationRole;
   confidence: number;
   points: CenterlinePoint[];
@@ -17,6 +18,7 @@ export type DigitizationDecision = {
 export type DigitizationReport = {
   decisions: DigitizationDecision[];
   sourceDetails: number;
+  sourceObjects: number;
   retainedDetails: number;
   omittedDetails: number;
   simplifiedDetails: number;
@@ -44,22 +46,22 @@ export function interpretDigitization(
     const assessment = detail?.details[sourceIndex];
     const points = assessment?.simplifiedPoints ?? path.points;
     if (assessment?.decision === "remove") return {
-      sourceIndex, role: "omit", confidence: 92, points,
+      sourceIndex, sourceElement: path.sourceElement, role: "omit", confidence: 92, points,
       reason: "Below the physical detail threshold; omitted to prevent thread noise.",
     };
     const fillCoverage = fill ? path.points.filter((point) => pointFallsInFill(centerlines, fill, point)).length / Math.max(1, path.points.length) : 0;
     if (fillCoverage > 0.45) return {
-      sourceIndex, role: "fill", confidence: Math.round(76 + fillCoverage * 20), points,
+      sourceIndex, sourceElement: path.sourceElement, role: "fill", confidence: Math.round(76 + fillCoverage * 20), points,
       reason: "Contained by a broad stitched region; resolved as fill instead of a duplicate outline.",
     };
     if (satinSources.has(sourceIndex)) return {
-      sourceIndex, role: "satin", confidence: 88, points,
+      sourceIndex, sourceElement: path.sourceElement, role: "satin", confidence: 88, points,
       reason: "Stable narrow column with sufficient rung coverage; resolved as satin.",
     };
     // Bean is an intentional reinforcement choice, never a fallback for fragmented geometry.
     const role: DigitizationRole = preferredLineRole;
     return {
-      sourceIndex, role, confidence: assessment?.decision === "simplify" ? 74 : 82, points,
+      sourceIndex, sourceElement: path.sourceElement, role, confidence: assessment?.decision === "simplify" ? 74 : 82, points,
       reason: assessment?.decision === "simplify"
         ? `Simplified from ${assessment.originalPoints} nodes before ${role} stitching.`
         : role === "bean" ? "Intentional line reinforced with bean stitch." : "Clean contour resolved as running stitch.",
@@ -70,6 +72,7 @@ export function interpretDigitization(
   return {
     decisions,
     sourceDetails: decisions.length,
+    sourceObjects: centerlines.sourceElementCount,
     retainedDetails,
     omittedDetails,
     simplifiedDetails: detail?.simplify ?? 0,
