@@ -62,11 +62,11 @@ export default function EmbroideryStage({ source, sourceName, centerlines, targe
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(105px,1fr))", borderTop: "1px solid #f7f2e729", borderLeft: "1px solid #f7f2e729" }}>
         {[
-          ["Running", intelligence.runningDetails], ["Bean", intelligence.beanDetails], ["Satin", intelligence.satinDetails],
+          ["Source objects", intelligence.sourceObjects], ["Running", intelligence.runningDetails], ["Bean", intelligence.beanDetails], ["Satin", intelligence.satinDetails],
           ["Fill", intelligence.fillDetails], ["Omitted", intelligence.omittedDetails], ["Rebuilt", plan?.reconstructedContinuities ?? 0],
         ].map(([label, value]) => <div key={label} style={{ padding: 10, borderRight: "1px solid #f7f2e729", borderBottom: "1px solid #f7f2e729" }}><small style={{ display: "block", color: "#f7f2e788", font: mono, textTransform: "uppercase" }}>{label}</small><strong style={{ display: "block", marginTop: 4 }}>{value}</strong></div>)}
       </div>
-      <p style={{ margin: 0, color: "#f7f2e7aa", font: "10px/1.55 var(--font-geist-mono)" }}>{intelligence.summary} Bridges are accepted only when they remain inside the original artwork. A score below 55 blocks export.</p>
+      <p style={{ margin: 0, color: "#f7f2e7aa", font: "10px/1.55 var(--font-geist-mono)" }}>{intelligence.summary} Reconstruction preserves the identity of each source object and accepts bridges only inside its artwork. A score below 70 blocks export.</p>
     </div>}
 
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.3fr) minmax(260px,.7fr)", gap: 20, marginTop: 22 }}>
