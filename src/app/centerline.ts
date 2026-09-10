@@ -4,6 +4,7 @@ export type CenterlinePath = {
   points: CenterlinePoint[];
   stitches: CenterlinePoint[];
   lengthMm: number;
+  sourceElement: number | null;
 };
 
 export type CenterlineResult = {
@@ -16,6 +17,7 @@ export type CenterlineResult = {
   rawPathCount: number;
   prunedPathCount: number;
   mergedPathCount: number;
+  sourceElementCount: number;
   artworkMask: Uint8Array;
   viewBox: [number, number, number, number];
 };
@@ -208,6 +210,64 @@ function loadSvgImage(source: string) {
   });
 }
 
+const SOURCE_GEOMETRY_SELECTOR = "path,rect,circle,ellipse,line,polyline,polygon";
+
+async function renderSourceElementMasks(source: string, width: number, height: number) {
+  const parsed = new DOMParser().parseFromString(source, "image/svg+xml");
+  const sourceElements = [...parsed.querySelectorAll(SOURCE_GEOMETRY_SELECTOR)];
+  // Isolated rasterization is intentionally bounded. Large documents keep the
+  // global fallback rather than spawning hundreds of browser image decodes.
+  if (!sourceElements.length || sourceElements.length > 64) return { masks: [] as Uint8Array[], count: sourceElements.length };
+  const masks: Uint8Array[] = [];
+  for (let sourceIndex = 0; sourceIndex < sourceElements.length; sourceIndex += 1) {
+    const clone = parsed.documentElement.cloneNode(true) as Element;
+    const elements = [...clone.querySelectorAll(SOURCE_GEOMETRY_SELECTOR)];
+    elements.forEach((element, index) => {
+      const existing = element.getAttribute("style") ?? "";
+      element.setAttribute("style", `${existing};visibility:${index === sourceIndex ? "visible" : "hidden"}!important`);
+    });
+    const isolated = new XMLSerializer().serializeToString(clone);
+    const canvas = window.document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const mask = new Uint8Array(width * height);
+    if (context) {
+      try {
+        const image = await loadSvgImage(isolated);
+        context.drawImage(image, 0, 0, width, height);
+        const rgba = context.getImageData(0, 0, width, height).data;
+        for (let index = 0; index < mask.length; index += 1) mask[index] = rgba[index * 4 + 3] > 48 ? 1 : 0;
+      } catch {
+        // Preserve the source index with an empty mask; global extraction still works.
+      }
+    }
+    masks.push(mask);
+  }
+  return { masks, count: sourceElements.length };
+}
+
+function identifySourceElement(points: CenterlinePoint[], masks: Uint8Array[], width: number, height: number, mmPerPixelX: number, mmPerPixelY: number) {
+  if (!masks.length) return null;
+  const scores = new Array(masks.length).fill(0);
+  const stride = Math.max(1, Math.floor(points.length / 24));
+  for (let pointIndex = 0; pointIndex < points.length; pointIndex += stride) {
+    const point = points[pointIndex];
+    const x = Math.max(0, Math.min(width - 1, Math.floor(point.x / mmPerPixelX)));
+    const y = Math.max(0, Math.min(height - 1, Math.floor(point.y / mmPerPixelY)));
+    masks.forEach((mask, sourceIndex) => {
+      let hit = false;
+      for (let dy = -1; dy <= 1 && !hit; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+        const sampleX = x + dx, sampleY = y + dy;
+        if (sampleX >= 0 && sampleY >= 0 && sampleX < width && sampleY < height && mask[sampleY * width + sampleX]) { hit = true; break; }
+      }
+      if (hit) scores[sourceIndex] += 1;
+    });
+  }
+  let winner = -1, best = 0;
+  scores.forEach((score, index) => { if (score > best) { best = score; winner = index; } });
+  return winner >= 0 ? winner : null;
+}
+
 export async function extractCenterlines(source: string, targetWidthMm: number, stitchLengthMm = 2.5): Promise<CenterlineResult> {
   const parsed = new DOMParser().parseFromString(source, "image/svg+xml"), svg = parsed.documentElement;
   const rawViewBox = svg.getAttribute("viewBox")?.trim().split(/[\s,]+/).map(Number);
@@ -230,13 +290,21 @@ export async function extractCenterlines(source: string, targetWidthMm: number, 
   const mmPerPixelX = targetWidthMm / rasterWidth, mmPerPixelY = targetHeightMm / rasterHeight, averageMmPerPixel = (mmPerPixelX + mmPerPixelY) / 2;
   const prunedPixelPaths = pruneShortTerminalBranches(rawPixelPaths, averageMmPerPixel);
   const mmPaths = prunedPixelPaths.map((pixels) => pixels.map((p) => ({ x: (p.x + 0.5) * mmPerPixelX, y: (p.y + 0.5) * mmPerPixelY }))).filter((points) => pathLength(points) >= 1.2).map((points) => simplify(points, 0.16));
-  const cleanedMmPaths = mergeNearbyContinuations(mmPaths), vectorPerMmX = vectorWidth / targetWidthMm, vectorPerMmY = vectorHeight / targetHeightMm;
-  const paths = cleanedMmPaths.map<CenterlinePath>((mmPoints) => {
+  const sourceGeometry = await renderSourceElementMasks(source, rasterWidth, rasterHeight);
+  const taggedPaths = mmPaths.map((points) => ({ points, sourceElement: identifySourceElement(points, sourceGeometry.masks, rasterWidth, rasterHeight, mmPerPixelX, mmPerPixelY) }));
+  const sourceGroups = new Map<string, typeof taggedPaths>();
+  taggedPaths.forEach((path, index) => {
+    const groupKey = path.sourceElement === null ? `unknown-${index}` : `source-${path.sourceElement}`;
+    sourceGroups.set(groupKey, [...(sourceGroups.get(groupKey) ?? []), path]);
+  });
+  const cleanedMmPaths = [...sourceGroups.values()].flatMap((group) => mergeNearbyContinuations(group.map((path) => path.points)).map((points) => ({ points, sourceElement: group[0].sourceElement })));
+  const vectorPerMmX = vectorWidth / targetWidthMm, vectorPerMmY = vectorHeight / targetHeightMm;
+  const paths = cleanedMmPaths.map<CenterlinePath>(({ points: mmPoints, sourceElement }) => {
     const lengthMm = pathLength(mmPoints);
     const vectorPoints = mmPoints.map((p) => ({ x: minX + p.x * vectorPerMmX, y: minY + p.y * vectorPerMmY }));
     const stitchMm = resample(mmPoints, stitchLengthMm);
     const stitches = stitchMm.map((p) => ({ x: minX + p.x * vectorPerMmX, y: minY + p.y * vectorPerMmY }));
-    return { points: vectorPoints, stitches, lengthMm };
+    return { points: vectorPoints, stitches, lengthMm, sourceElement };
   });
   return {
     paths,
@@ -248,6 +316,7 @@ export async function extractCenterlines(source: string, targetWidthMm: number, 
     rawPathCount: rawPixelPaths.length,
     prunedPathCount: prunedPixelPaths.length,
     mergedPathCount: paths.length,
+    sourceElementCount: sourceGeometry.count,
     artworkMask,
     viewBox,
   };
