@@ -4,7 +4,7 @@ import type { SatinResult } from "./satin-engine";
 import { finalizeDigitizationReport, interpretDigitization, type DigitizationReport } from "./digitization-intelligence";
 
 export type StitchKind = "running" | "bean" | "satin" | "fill-underlay" | "fill";
-export type EmbroideryBlock = { id: string; kind: StitchKind; color: string; points: CenterlinePoint[]; groupId?: string; sequence?: number };
+export type EmbroideryBlock = { id: string; kind: StitchKind; color: string; points: CenterlinePoint[]; groupId?: string; sequence?: number; sourceElement?: number | null };
 export type EmbroideryCommand = { type: "stitch" | "jump" | "color" | "end"; x: number; y: number; color?: string; trim?: boolean };
 export type Hoop = { name: "100 × 100" | "130 × 180"; widthMm: number; heightMm: number };
 export type SafetyCheck = { level: "pass" | "warning" | "block"; message: string };
@@ -94,7 +94,7 @@ function bridgeBelongsToArtwork(a: CenterlinePoint, b: CenterlinePoint, result: 
   return hits / (samples + 1) >= 0.72;
 }
 
-function joinRunningContinuities(blocks: EmbroideryBlock[], result: CenterlineResult, targetWidthMm: number, maximumGapMm = 2.4, minimumAlignment = 0.12) {
+function joinRunningContinuities(blocks: EmbroideryBlock[], result: CenterlineResult, targetWidthMm: number) {
   const working = blocks.map((block) => ({ ...block, points: [...block.points] }));
   let reconstructed = 0;
   let changed = true;
@@ -103,6 +103,11 @@ function joinRunningContinuities(blocks: EmbroideryBlock[], result: CenterlineRe
     outer: for (let leftIndex = 0; leftIndex < working.length; leftIndex += 1) for (let rightIndex = leftIndex + 1; rightIndex < working.length; rightIndex += 1) {
       const left = working[leftIndex], right = working[rightIndex];
       if (left.color !== right.color || left.kind !== right.kind || !["running", "bean"].includes(left.kind)) continue;
+      const bothMapped = left.sourceElement !== null && left.sourceElement !== undefined && right.sourceElement !== null && right.sourceElement !== undefined;
+      if (bothMapped && left.sourceElement !== right.sourceElement) continue;
+      const sameSource = bothMapped && left.sourceElement === right.sourceElement;
+      const maximumGapMm = sameSource ? 3.2 : 1.2;
+      const minimumAlignment = sameSource ? -0.18 : 0.58;
       for (const leftStart of [false, true]) for (const rightStart of [true, false]) {
         const a = leftStart ? first(left) : last(left), b = rightStart ? first(right) : last(right);
         const gap = distance(a, b);
@@ -169,7 +174,7 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
     const kind: "running" | "bean" = decision.role === "bean" ? "bean" : "running";
     const source = decision.points.length === path.points.length ? path.stitches : decision.points;
     const converted = source.map((point) => toMm(point, centerlines, targetWidthMm));
-    blocks.push({ id: `${kind}-${index}`, kind, color: "#000000", points: kind === "bean" ? bean(converted) : converted });
+    blocks.push({ id: `${kind}-${index}`, kind, color: "#000000", points: kind === "bean" ? bean(converted) : converted, sourceElement: decision.sourceElement });
   });
   satin?.columns.forEach((column, index) => blocks.push({ id: `satin-${index}`, kind: "satin", color: "#000000", points: column.stitches.map((point) => toMm(point, centerlines, targetWidthMm)) }));
   fill?.blocks.forEach((block, index) => {
@@ -207,7 +212,7 @@ export function buildEmbroideryPlan(centerlines: CenterlineResult | null, satin:
   const jumpCount = commands.filter((command) => command.type === "jump").length;
   const trimCount = commands.filter((command) => command.type === "jump" && command.trim).length;
   const finalizedIntelligence = finalizeDigitizationReport(intelligence, ordered.length, jumpCount, trimCount, reconstruction.reconstructed);
-  const digitizationLevel: SafetyCheck["level"] = !finalizedIntelligence || finalizedIntelligence.score < 55 ? "block" : finalizedIntelligence.score < 70 ? "warning" : "pass";
+  const digitizationLevel: SafetyCheck["level"] = !finalizedIntelligence || finalizedIntelligence.score < 70 ? "block" : finalizedIntelligence.score < 80 ? "warning" : "pass";
   const checks: SafetyCheck[] = [
     { level: hoop ? "pass" : "block", message: hoop ? `Fits the ${hoop.name} mm hoop with a 1 mm margin.` : "Design exceeds the safe area of the 130 × 180 mm hoop." },
     { level: invalid ? "block" : "pass", message: invalid ? "Invalid machine coordinates were found." : "All machine coordinates are finite." },
